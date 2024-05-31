@@ -1,0 +1,19 @@
+[package]
+name = "ray_light_2d"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = "0.13.0"
+rand = "0.8.5"
+
+# Optimization
+[profile.dev]
+opt-level = 1
+debug = true
+
+# High optimization
+[profile.dev.package."*"]
+opt-level = 3
