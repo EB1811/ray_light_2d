@@ -52,7 +52,7 @@ fn setup(
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(50.)).into(),
         // 4. Put something bright in a dark environment to see the effect
-        material: materials.add(Color::rgb(0.2, 0.9, 0.0)),
+        material: materials.add(Color::rgb(5.0, 5.0, 5.0)),
         transform: Transform::from_translation(Vec3::new(-300., -200., 0.)),
         ..default()
     });
@@ -60,8 +60,24 @@ fn setup(
     // Light occluder
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(50.)).into(),
-        material: materials.add(Color::rgb(0.9, 0.2, 0.0)),
+        material: materials.add(Color::rgb(0.0, 0.0, 0.0)),
         transform: Transform::from_translation(Vec3::new(300., 200., 0.)),
+        ..default()
+    });
+
+    // Light occluder
+    commands.spawn(MaterialMesh2dBundle {
+        mesh: meshes.add(Circle::new(50.)).into(),
+        material: materials.add(Color::rgb(0.0, 0.0, 0.0)),
+        transform: Transform::from_translation(Vec3::new(-300., 300., 0.)),
+        ..default()
+    });
+
+    // Light occluder
+    commands.spawn(MaterialMesh2dBundle {
+        mesh: meshes.add(Circle::new(50.)).into(),
+        material: materials.add(Color::rgb(0.0, 0.0, 0.0)),
+        transform: Transform::from_translation(Vec3::new(300., -300., 0.)),
         ..default()
     });
 }

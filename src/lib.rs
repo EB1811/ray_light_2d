@@ -38,16 +38,18 @@ pub struct Params {
 
 #[derive(Resource)]
 struct VordieLightPipeline {
-    bind_group_layout: BindGroupLayout,
     sampler: Sampler,
-    pipeline_id: CachedRenderPipelineId,
+    init_bind_group_layout: BindGroupLayout,
+    main_bind_group_layout: BindGroupLayout,
+    init_pipeline_id: CachedRenderPipelineId,
+    main_pipeline_id: CachedRenderPipelineId,
 }
 
 impl FromWorld for VordieLightPipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.get_resource::<RenderDevice>().unwrap().clone();
 
-        let bind_group_layout = render_device.create_bind_group_layout(
+        let init_bind_group_layout = render_device.create_bind_group_layout(
             "vordie_light_init_group_layout",
             &BindGroupLayoutEntries::sequential(
                 // The layout entries will only be visible in the fragment stage
@@ -64,20 +66,62 @@ impl FromWorld for VordieLightPipeline {
                 ),
             ),
         );
-
-        // We can create the sampler here since it won't change at runtime and doesn't depend on the view.
-        let sampler = render_device.create_sampler(&SamplerDescriptor::default());
+        let main_bind_group_layout = render_device.create_bind_group_layout(
+            "vordie_light_main_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                // The layout entries will only be visible in the fragment stage
+                ShaderStages::FRAGMENT,
+                (
+                    // The screen texture
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // The sampler that will be used to sample the screen texture
+                    sampler(SamplerBindingType::NonFiltering),
+                    // The settings uniform that will control the effect
+                    uniform_buffer::<VordieLightSettings>(false),
+                    // Jumpflood params
+                    uniform_buffer::<Params>(false),
+                ),
+            ),
+        );
 
         let assets_server = world.resource::<AssetServer>();
-        let shader = assets_server.load("shaders/vordie_init.wgsl");
+        let init_shader = assets_server.load("shaders/vordie_init.wgsl");
+        let main_shader = assets_server.load("shaders/vordie_main.wgsl");
 
         let pipeline_cache = world.get_resource::<PipelineCache>().unwrap();
-        let cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+        let init_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some("vordie_init_pipeline".into()),
-            layout: vec![bind_group_layout.clone()],
+            layout: vec![init_bind_group_layout.clone()],
             vertex: fullscreen_shader_vertex_state(),
             fragment: Some(FragmentState {
-                shader: shader.clone(),
+                shader: init_shader.clone(),
+                shader_defs: vec![],
+                entry_point: "fragment".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                unclipped_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            push_constant_ranges: vec![],
+        });
+        let main_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("vordie_main_pipeline".into()),
+            layout: vec![main_bind_group_layout.clone()],
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: main_shader.clone(),
                 shader_defs: vec![],
                 entry_point: "fragment".into(),
                 targets: vec![Some(ColorTargetState {
@@ -100,10 +144,15 @@ impl FromWorld for VordieLightPipeline {
             push_constant_ranges: vec![],
         });
 
+        // We can create the sampler here since it won't change at runtime and doesn't depend on the view.
+        let sampler = render_device.create_sampler(&SamplerDescriptor::default());
+
         Self {
-            bind_group_layout,
             sampler,
-            pipeline_id: cached,
+            init_bind_group_layout,
+            main_bind_group_layout,
+            init_pipeline_id: init_cached,
+            main_pipeline_id: main_cached,
         }
     }
 }
@@ -128,7 +177,15 @@ impl ViewNode for VordieNode {
     ) -> Result<(), NodeRunError> {
         let vordie_pipeline = world.resource::<VordieLightPipeline>();
         let pipeline_cache = world.resource::<PipelineCache>();
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(vordie_pipeline.pipeline_id) else {
+
+        let Some(init_pipeline) =
+            pipeline_cache.get_render_pipeline(vordie_pipeline.init_pipeline_id)
+        else {
+            return Ok(());
+        };
+        let Some(main_pipeline) =
+            pipeline_cache.get_render_pipeline(vordie_pipeline.main_pipeline_id)
+        else {
             return Ok(());
         };
 
@@ -137,10 +194,41 @@ impl ViewNode for VordieNode {
             return Ok(());
         };
 
-        // Begining the jump flood algorithm loop
-        // Temp fixed screen size
-        let screen_size = Vec2::new(1024., 1024.);
+        // First pass: Initialize the jump flood algorithm
+        {
+            let view_texture = view_target.post_process_write();
 
+            let bind_group = render_context.render_device().create_bind_group(
+                "post_process_bind_group",
+                &vordie_pipeline.init_bind_group_layout,
+                &BindGroupEntries::sequential((
+                    // Make sure to use the source view
+                    view_texture.source,
+                    // Use the sampler created for the pipeline
+                    &vordie_pipeline.sampler,
+                    // Set the settings binding, including the offset
+                    settings_binding.clone(),
+                    // Create new params binding
+                    settings_binding.clone(),
+                )),
+            );
+            let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("vordie_light_init"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: view_texture.destination,
+                    resolve_target: None,
+                    ops: Operations::default(),
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            render_pass.set_render_pipeline(init_pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+        }
+
+        // Begining the jump flood algorithm loop
         // Buffer for params in the jumpflood algorithm
         let render_device = world.get_resource::<RenderDevice>().unwrap().clone();
         let render_queue = world.resource::<RenderQueue>();
@@ -165,6 +253,9 @@ impl ViewNode for VordieNode {
             .create_view(&TextureViewDescriptor {
                 ..Default::default()
             });
+
+        // Temp fixed screen size
+        let screen_size = Vec2::new(1024., 1024.);
 
         let passes = screen_size.x.log2().ceil() as i32;
         // let passes = 0;
@@ -204,7 +295,7 @@ impl ViewNode for VordieNode {
 
             let bind_group = render_context.render_device().create_bind_group(
                 "post_process_bind_group",
-                &vordie_pipeline.bind_group_layout,
+                &vordie_pipeline.main_bind_group_layout,
                 &BindGroupEntries::sequential((
                     // Make sure to use the source view
                     &source,
@@ -233,7 +324,7 @@ impl ViewNode for VordieNode {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            render_pass.set_render_pipeline(pipeline);
+            render_pass.set_render_pipeline(main_pipeline);
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..3, 0..1);
 
@@ -241,37 +332,6 @@ impl ViewNode for VordieNode {
             prev_view = destination_view.clone();
         }
         // println!("VordieLight2D: ThisNode::run");
-
-        // let view_texture = view_target.post_process_write();
-
-        // let bind_group = render_context.render_device().create_bind_group(
-        //     "post_process_bind_group",
-        //     &vordie_pipeline.bind_group_layout,
-        //     &BindGroupEntries::sequential((
-        //         // Make sure to use the source view
-        //         view_texture.source,
-        //         // Use the sampler created for the pipeline
-        //         &vordie_pipeline.sampler,
-        //         // Set the settings binding, including the offset
-        //         settings_binding.clone(),
-        //         // Create new params binding
-        //         settings_binding.clone(),
-        //     )),
-        // );
-        // let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-        //     label: Some("vordie_light_init"),
-        //     color_attachments: &[Some(RenderPassColorAttachment {
-        //         view: view_texture.destination,
-        //         resolve_target: None,
-        //         ops: Operations::default(),
-        //     })],
-        //     depth_stencil_attachment: None,
-        //     timestamp_writes: None,
-        //     occlusion_query_set: None,
-        // });
-        // render_pass.set_render_pipeline(pipeline);
-        // render_pass.set_bind_group(0, &bind_group, &[]);
-        // render_pass.draw(0..3, 0..1);
 
         Ok(())
     }
