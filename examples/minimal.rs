@@ -43,7 +43,7 @@ fn setup(
         },
         // BloomSettings::default(), // 3. Enable bloom for the camera
         VordieLightSettings {
-            setting: 0.2,
+            u_dis_mod: 1.0,
             ..default()
         },
     ));

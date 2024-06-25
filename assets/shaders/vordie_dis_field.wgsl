@@ -14,13 +14,10 @@ struct VordieLightSettings {
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let in_diffuse   = textureSample(screen_texture, texture_sampler, in.uv);
+    let in_diffuse = textureSample(screen_texture, texture_sampler, in.uv);
 
-    return vec4<f32>(
-        in.uv.x * in_diffuse.a,
-        in.uv.y * in_diffuse.a,
-        0.0,
-        1.0
-    );
-
+    let dist: f32 = distance(in_diffuse.xy, in.uv);
+    let mapped: f32 = clamp(dist * settings.u_dis_mod, 0.0, 1.0);
+    
+    return vec4<f32>(vec3<f32>(mapped), 1.0);
 }

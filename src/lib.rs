@@ -28,7 +28,7 @@ use bevy::{
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct VordieLightSettings {
-    pub setting: f32,
+    pub u_dis_mod: f32,
 }
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
@@ -41,8 +41,10 @@ struct VordieLightPipeline {
     sampler: Sampler,
     init_bind_group_layout: BindGroupLayout,
     main_bind_group_layout: BindGroupLayout,
+    dis_field_bind_group_layout: BindGroupLayout,
     init_pipeline_id: CachedRenderPipelineId,
     main_pipeline_id: CachedRenderPipelineId,
+    dis_field_pipeline_id: CachedRenderPipelineId,
 }
 
 impl FromWorld for VordieLightPipeline {
@@ -61,8 +63,6 @@ impl FromWorld for VordieLightPipeline {
                     sampler(SamplerBindingType::NonFiltering),
                     // The settings uniform that will control the effect
                     uniform_buffer::<VordieLightSettings>(false),
-                    // Jumpflood params
-                    uniform_buffer::<Params>(false),
                 ),
             ),
         );
@@ -83,10 +83,26 @@ impl FromWorld for VordieLightPipeline {
                 ),
             ),
         );
+        let dis_field_bind_group_layout = render_device.create_bind_group_layout(
+            "vordie_light_dis_field_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                // The layout entries will only be visible in the fragment stage
+                ShaderStages::FRAGMENT,
+                (
+                    // The screen texture
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // The sampler that will be used to sample the screen texture
+                    sampler(SamplerBindingType::NonFiltering),
+                    // The settings uniform that will control the effect
+                    uniform_buffer::<VordieLightSettings>(false),
+                ),
+            ),
+        );
 
         let assets_server = world.resource::<AssetServer>();
         let init_shader = assets_server.load("shaders/vordie_init.wgsl");
-        let main_shader = assets_server.load("shaders/vordie_main.wgsl");
+        let main_shader = assets_server.load("shaders/vordie_jfa.wgsl");
+        let dis_field_shader = assets_server.load("shaders/vordie_dis_field.wgsl");
 
         let pipeline_cache = world.get_resource::<PipelineCache>().unwrap();
         let init_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
@@ -143,6 +159,33 @@ impl FromWorld for VordieLightPipeline {
             multisample: MultisampleState::default(),
             push_constant_ranges: vec![],
         });
+        let dis_field_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("vordie_dis_field_pipeline".into()),
+            layout: vec![dis_field_bind_group_layout.clone()],
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: dis_field_shader.clone(),
+                shader_defs: vec![],
+                entry_point: "fragment".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                unclipped_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            push_constant_ranges: vec![],
+        });
 
         // We can create the sampler here since it won't change at runtime and doesn't depend on the view.
         let sampler = render_device.create_sampler(&SamplerDescriptor::default());
@@ -151,8 +194,10 @@ impl FromWorld for VordieLightPipeline {
             sampler,
             init_bind_group_layout,
             main_bind_group_layout,
+            dis_field_bind_group_layout,
             init_pipeline_id: init_cached,
             main_pipeline_id: main_cached,
+            dis_field_pipeline_id: dis_field_cached,
         }
     }
 }
@@ -188,6 +233,11 @@ impl ViewNode for VordieNode {
         else {
             return Ok(());
         };
+        let Some(dis_field_pipeline) =
+            pipeline_cache.get_render_pipeline(vordie_pipeline.dis_field_pipeline_id)
+        else {
+            return Ok(());
+        };
 
         let settings_uniforms = world.resource::<ComponentUniforms<VordieLightSettings>>();
         let Some(settings_binding) = settings_uniforms.uniforms().binding() else {
@@ -207,8 +257,6 @@ impl ViewNode for VordieNode {
                     // Use the sampler created for the pipeline
                     &vordie_pipeline.sampler,
                     // Set the settings binding, including the offset
-                    settings_binding.clone(),
-                    // Create new params binding
                     settings_binding.clone(),
                 )),
             );
@@ -331,7 +379,38 @@ impl ViewNode for VordieNode {
             // Set the target for the next iteration
             prev_view = destination_view.clone();
         }
-        // println!("VordieLight2D: ThisNode::run");
+
+        // Distance Field Pass
+        {
+            let view_texture = view_target.post_process_write();
+
+            let bind_group = render_context.render_device().create_bind_group(
+                "dis_field_bind_group",
+                &vordie_pipeline.dis_field_bind_group_layout,
+                &BindGroupEntries::sequential((
+                    // Make sure to use the source view
+                    view_texture.source,
+                    // Use the sampler created for the pipeline
+                    &vordie_pipeline.sampler,
+                    // Set the settings binding, including the offset
+                    settings_binding.clone(),
+                )),
+            );
+            let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("vordie_light_init"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: view_texture.destination,
+                    resolve_target: None,
+                    ops: Operations::default(),
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            render_pass.set_render_pipeline(dis_field_pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+        }
 
         Ok(())
     }

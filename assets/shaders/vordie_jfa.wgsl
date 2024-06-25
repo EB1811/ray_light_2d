@@ -7,7 +7,7 @@ var screen_texture: texture_2d<f32>;
 var texture_sampler: sampler;
 
 struct VordieLightSettings {
-    setting: f32
+    u_dis_mod: f32
 }
 @group(0) @binding(2) var<uniform> settings: VordieLightSettings;
 
@@ -21,7 +21,7 @@ struct Params {
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let screen_pixel_size: vec2<f32> = vec2<f32>(1024.0, 1024.0);
 
-    var closest_dist: f32 = 9999.0;
+    var closest_dist: f32 = 9999999.0;
     var closest_pos: vec2<f32> = vec2<f32>(0.0, 0.0);
 
     // insert jump flooding algorithm here.
