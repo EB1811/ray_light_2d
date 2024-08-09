@@ -26,9 +26,24 @@ use bevy::{
     },
 };
 
-#[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
+#[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct VordieLightSettings {
     pub u_dis_mod: f32,
+    pub u_rays_per_pixel: i32,
+    pub u_emission_multi: f32,
+    pub u_max_raymarch_steps: i32,
+    pub u_dist_mod: f32,
+}
+impl Default for VordieLightSettings {
+    fn default() -> Self {
+        Self {
+            u_dis_mod: 1.0,
+            u_rays_per_pixel: 32,
+            u_emission_multi: 1.0,
+            u_max_raymarch_steps: 128,
+            u_dist_mod: 1.0,
+        }
+    }
 }
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
@@ -42,9 +57,11 @@ struct VordieLightPipeline {
     init_bind_group_layout: BindGroupLayout,
     main_bind_group_layout: BindGroupLayout,
     dis_field_bind_group_layout: BindGroupLayout,
+    gi_raycast_bind_group_layout: BindGroupLayout,
     init_pipeline_id: CachedRenderPipelineId,
     main_pipeline_id: CachedRenderPipelineId,
     dis_field_pipeline_id: CachedRenderPipelineId,
+    gi_raycast_pipeline_id: CachedRenderPipelineId,
 }
 
 impl FromWorld for VordieLightPipeline {
@@ -98,11 +115,31 @@ impl FromWorld for VordieLightPipeline {
                 ),
             ),
         );
+        let gi_raycast_bind_group_layout = render_device.create_bind_group_layout(
+            "vordie_light_gi_raycast_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                // The layout entries will only be visible in the fragment stage
+                ShaderStages::FRAGMENT,
+                (
+                    // The screen texture
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // The sampler that will be used to sample the screen texture
+                    sampler(SamplerBindingType::NonFiltering),
+                    // The settings uniform that will control the effect
+                    uniform_buffer::<VordieLightSettings>(false),
+                    // Emitter and occluder texture
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // Time
+                    uniform_buffer::<f32>(false),
+                ),
+            ),
+        );
 
         let assets_server = world.resource::<AssetServer>();
         let init_shader = assets_server.load("shaders/vordie_init.wgsl");
         let main_shader = assets_server.load("shaders/vordie_jfa.wgsl");
         let dis_field_shader = assets_server.load("shaders/vordie_dis_field.wgsl");
+        let gi_raycast_shader = assets_server.load("shaders/vordie_gi_raycast.wgsl");
 
         let pipeline_cache = world.get_resource::<PipelineCache>().unwrap();
         let init_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
@@ -186,6 +223,33 @@ impl FromWorld for VordieLightPipeline {
             multisample: MultisampleState::default(),
             push_constant_ranges: vec![],
         });
+        let gi_raycast_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("vordie_gi_raycast_pipeline".into()),
+            layout: vec![gi_raycast_bind_group_layout.clone()],
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: gi_raycast_shader.clone(),
+                shader_defs: vec![],
+                entry_point: "fragment".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                unclipped_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            push_constant_ranges: vec![],
+        });
 
         // We can create the sampler here since it won't change at runtime and doesn't depend on the view.
         let sampler = render_device.create_sampler(&SamplerDescriptor::default());
@@ -195,9 +259,11 @@ impl FromWorld for VordieLightPipeline {
             init_bind_group_layout,
             main_bind_group_layout,
             dis_field_bind_group_layout,
+            gi_raycast_bind_group_layout,
             init_pipeline_id: init_cached,
             main_pipeline_id: main_cached,
             dis_field_pipeline_id: dis_field_cached,
+            gi_raycast_pipeline_id: gi_raycast_cached,
         }
     }
 }
@@ -238,14 +304,43 @@ impl ViewNode for VordieNode {
         else {
             return Ok(());
         };
+        let Some(gi_raycast_pipeline) =
+            pipeline_cache.get_render_pipeline(vordie_pipeline.gi_raycast_pipeline_id)
+        else {
+            return Ok(());
+        };
 
         let settings_uniforms = world.resource::<ComponentUniforms<VordieLightSettings>>();
         let Some(settings_binding) = settings_uniforms.uniforms().binding() else {
             return Ok(());
         };
 
+        // Saving the previous texture as emitters and occluders texture
+        let mut emitters_occluders_copy = view_target.main_texture_view().clone();
+
         // First pass: Initialize the jump flood algorithm
         {
+            let copy_texture_descriptor = TextureDescriptor {
+                label: Some("jfa_destination_texture"),
+                size: Extent3d {
+                    width: view_target.main_texture().width(),
+                    height: view_target.main_texture().height(),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba16Float,
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            };
+            let copy_view = render_context
+                .render_device()
+                .create_texture(&copy_texture_descriptor)
+                .create_view(&TextureViewDescriptor {
+                    ..Default::default()
+                });
+
             let view_texture = view_target.post_process_write();
 
             let bind_group = render_context.render_device().create_bind_group(
@@ -274,6 +369,27 @@ impl ViewNode for VordieNode {
             render_pass.set_render_pipeline(init_pipeline);
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..3, 0..1);
+
+            drop(render_pass);
+
+            // Again we need to copy the texture to use it as emitters and occluders
+            let mut copy_render_pass =
+                render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                    label: Some("vordie_light_init"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &copy_view,
+                        resolve_target: None,
+                        ops: Operations::default(),
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            copy_render_pass.set_render_pipeline(init_pipeline);
+            copy_render_pass.set_bind_group(0, &bind_group, &[]);
+            copy_render_pass.draw(0..3, 0..1);
+
+            emitters_occluders_copy = copy_view.clone();
         }
 
         // Begining the jump flood algorithm loop
@@ -412,34 +528,50 @@ impl ViewNode for VordieNode {
             render_pass.draw(0..3, 0..1);
         }
 
+        // GI Raycast Pass
+        {
+            let start = std::time::SystemTime::now();
+            let since_the_epoch = start
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards");
+            let mut time_buffer = UniformBuffer::<f32>::from(since_the_epoch.as_millis() as f32);
+            time_buffer.write_buffer(&render_device, render_queue);
+
+            let view_texture = view_target.post_process_write();
+
+            let bind_group = render_context.render_device().create_bind_group(
+                "gi_raycast_bind_group",
+                &vordie_pipeline.gi_raycast_bind_group_layout,
+                &BindGroupEntries::sequential((
+                    // Make sure to use the source view
+                    view_texture.source,
+                    // Use the sampler created for the pipeline
+                    &vordie_pipeline.sampler,
+                    // Set the settings binding, including the offset
+                    settings_binding.clone(),
+                    // Set the emitters and occluders texture
+                    &emitters_occluders_copy,
+                    // Set the time
+                    time_buffer.binding().unwrap(),
+                )),
+            );
+            let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("vordie_light_init"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: view_texture.destination,
+                    resolve_target: None,
+                    ops: Operations::default(),
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            render_pass.set_render_pipeline(gi_raycast_pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+        }
+
         Ok(())
-    }
-}
-
-#[derive(Component)]
-struct JFATexture {
-    // First mip is half the screen resolution, successive mips are half the previous
-    #[cfg(any(
-        not(feature = "webgl"),
-        not(target_arch = "wasm32"),
-        feature = "webgpu"
-    ))]
-    texture: CachedTexture,
-    mip_count: u32,
-}
-
-impl JFATexture {
-    #[cfg(any(
-        not(feature = "webgl"),
-        not(target_arch = "wasm32"),
-        feature = "webgpu"
-    ))]
-    fn view(&self, base_mip_level: u32) -> TextureView {
-        self.texture.texture.create_view(&TextureViewDescriptor {
-            base_mip_level,
-            mip_level_count: Some(1u32),
-            ..Default::default()
-        })
     }
 }
 
@@ -462,7 +594,7 @@ impl Plugin for VordieLight2DPlugin {
             UniformComponentPlugin::<VordieLightSettings>::default(),
         ));
 
-        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
@@ -481,7 +613,7 @@ impl Plugin for VordieLight2DPlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
         render_app.init_resource::<VordieLightPipeline>();
