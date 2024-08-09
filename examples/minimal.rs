@@ -9,7 +9,7 @@ use ray_light_2d::prelude::*;
 fn main() {
     // Basic setup.
     App::new()
-        .insert_resource(ClearColor(Color::rgba(0.0, 0.0, 0.0, 0.0)))
+        .insert_resource(ClearColor(Color::srgba(0.0, 0.0, 0.0, 0.0)))
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -42,17 +42,14 @@ fn setup(
             ..default()
         },
         // BloomSettings::default(), // 3. Enable bloom for the camera
-        VordieLightSettings {
-            u_dis_mod: 1.0,
-            ..default()
-        },
+        VordieLightSettings { ..default() },
     ));
 
     // Light
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(50.)).into(),
         // 4. Put something bright in a dark environment to see the effect
-        material: materials.add(Color::rgb(5.0, 5.0, 5.0)),
+        material: materials.add(Color::srgb(5.0, 5.0, 5.0)),
         transform: Transform::from_translation(Vec3::new(-300., -200., 0.)),
         ..default()
     });
@@ -60,7 +57,7 @@ fn setup(
     // Light occluder
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(50.)).into(),
-        material: materials.add(Color::rgb(0.0, 0.0, 0.0)),
+        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
         transform: Transform::from_translation(Vec3::new(300., 200., 0.)),
         ..default()
     });
@@ -68,7 +65,7 @@ fn setup(
     // Light occluder
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(50.)).into(),
-        material: materials.add(Color::rgb(0.0, 0.0, 0.0)),
+        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
         transform: Transform::from_translation(Vec3::new(-300., 300., 0.)),
         ..default()
     });
@@ -76,7 +73,7 @@ fn setup(
     // Light occluder
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(50.)).into(),
-        material: materials.add(Color::rgb(0.0, 0.0, 0.0)),
+        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
         transform: Transform::from_translation(Vec3::new(300., -300., 0.)),
         ..default()
     });
