@@ -1,3 +1,5 @@
+use std::ops::Div;
+
 use bevy::{
     core_pipeline::{
         core_2d::graph::{Core2d, Node2d},
@@ -25,6 +27,9 @@ use bevy::{
         RenderApp,
     },
 };
+
+// Testing by step
+const STEP: i32 = 2;
 
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct VordieLightSettings {
@@ -315,6 +320,10 @@ impl ViewNode for VordieNode {
             return Ok(());
         };
 
+        if STEP == 0 {
+            return Ok(());
+        }
+
         // Saving the previous texture as emitters and occluders texture
         let mut emitters_occluders_copy = view_target.main_texture_view().clone();
 
@@ -392,44 +401,20 @@ impl ViewNode for VordieNode {
             emitters_occluders_copy = copy_view.clone();
         }
 
+        if STEP == 1 {
+            return Ok(());
+        }
+
         // Begining the jump flood algorithm loop
         // Buffer for params in the jumpflood algorithm
         let render_device = world.get_resource::<RenderDevice>().unwrap().clone();
         let render_queue = world.resource::<RenderQueue>();
-
-        let prev_texture_descriptor = TextureDescriptor {
-            label: Some("jfa_source_texture"),
-            size: Extent3d {
-                width: view_target.main_texture().width(),
-                height: view_target.main_texture().height(),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba16Float,
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        };
-        let mut prev_view = render_context
-            .render_device()
-            .create_texture(&prev_texture_descriptor)
-            .create_view(&TextureViewDescriptor {
-                ..Default::default()
-            });
-
-        // Temp fixed screen size
-        let screen_size = Vec2::new(1024., 1024.);
-
-        let passes = screen_size.x.log2().ceil() as i32;
-        // let passes = 0;
-        for i in 0..passes {
-            // Create the destination textures
-            let destination_texture_descriptor = TextureDescriptor {
-                label: Some("jfa_destination_texture"),
+        {
+            let prev_texture_descriptor = TextureDescriptor {
+                label: Some("jfa_source_texture"),
                 size: Extent3d {
-                    width: view_target.main_texture().width(),
-                    height: view_target.main_texture().height(),
+                    width: 1280,
+                    height: 720,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -439,61 +424,108 @@ impl ViewNode for VordieNode {
                 usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             };
-            let destination_view = render_context
+            let mut prev_view = render_context
                 .render_device()
-                .create_texture(&destination_texture_descriptor)
+                .create_texture(&prev_texture_descriptor)
                 .create_view(&TextureViewDescriptor {
                     ..Default::default()
                 });
 
-            let source = if i == 0 {
-                view_target.main_texture_view().clone()
-            } else {
-                prev_view.clone()
-            };
+            // Temp fixed screen size
+            //   let screen_size = Vec2::new(
+            //     view_target.main_texture().width() as f32,
+            //     view_target.main_texture().height() as f32,
+            // );
+            let screen_size = Vec2::new(1280., 720.);
 
-            let offset = 2f32.powi(passes - i - 1);
+            let passes = f32::max(screen_size.x, screen_size.y)
+                .log2()
+                .div(2.0_f32.log2())
+                .ceil() as i32;
+            // let passes = 4;
+            let stop_at = 100;
 
-            let mut params_buffer = UniformBuffer::<Params>::from(Params { offset });
-            params_buffer.write_buffer(&render_device, render_queue);
+            for i in 0..=passes {
+                // Create the destination textures
+                let destination_texture_descriptor = TextureDescriptor {
+                    label: Some("jfa_destination_texture"),
+                    size: Extent3d {
+                        width: 1280,
+                        height: 720,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format: TextureFormat::Rgba16Float,
+                    usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                };
+                let destination_view = render_context
+                    .render_device()
+                    .create_texture(&destination_texture_descriptor)
+                    .create_view(&TextureViewDescriptor {
+                        ..Default::default()
+                    });
 
-            let bind_group = render_context.render_device().create_bind_group(
-                "post_process_bind_group",
-                &vordie_pipeline.main_bind_group_layout,
-                &BindGroupEntries::sequential((
-                    // Make sure to use the source view
-                    &source,
-                    // Use the sampler created for the pipeline
-                    &vordie_pipeline.sampler,
-                    // Set the settings binding, including the offset
-                    settings_binding.clone(),
-                    // Create new params binding
-                    params_buffer.binding().unwrap(),
-                )),
-            );
+                let source = if i == 0 {
+                    view_target.main_texture_view().clone()
+                } else {
+                    prev_view.clone()
+                };
 
-            let color_attachment = if i == passes - 1 {
-                view_target.get_unsampled_color_attachment()
-            } else {
-                RenderPassColorAttachment {
-                    view: &destination_view,
-                    resolve_target: None,
-                    ops: Operations::default(),
+                let offset = 2f32.powi(passes - i - 1);
+
+                let mut params_buffer = UniformBuffer::<Params>::from(Params { offset });
+                params_buffer.write_buffer(&render_device, render_queue);
+
+                let bind_group = render_context.render_device().create_bind_group(
+                    "post_process_bind_group",
+                    &vordie_pipeline.main_bind_group_layout,
+                    &BindGroupEntries::sequential((
+                        // Make sure to use the source view
+                        &source,
+                        // Use the sampler created for the pipeline
+                        &vordie_pipeline.sampler,
+                        // Set the settings binding, including the offset
+                        settings_binding.clone(),
+                        // Create new params binding
+                        params_buffer.binding().unwrap(),
+                    )),
+                );
+
+                let color_attachment = if i == passes || i == stop_at {
+                    view_target.get_unsampled_color_attachment()
+                } else {
+                    RenderPassColorAttachment {
+                        view: &destination_view,
+                        resolve_target: None,
+                        ops: Operations::default(),
+                    }
+                };
+                let mut render_pass =
+                    render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                        label: Some("vordie_light_init"),
+                        color_attachments: &[Some(color_attachment)],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                render_pass.set_render_pipeline(main_pipeline);
+                render_pass.set_bind_group(0, &bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+
+                // Set the target for the next iteration
+                prev_view = destination_view.clone();
+
+                if i == stop_at {
+                    break;
                 }
-            };
-            let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-                label: Some("vordie_light_init"),
-                color_attachments: &[Some(color_attachment)],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            render_pass.set_render_pipeline(main_pipeline);
-            render_pass.set_bind_group(0, &bind_group, &[]);
-            render_pass.draw(0..3, 0..1);
+            }
+        }
 
-            // Set the target for the next iteration
-            prev_view = destination_view.clone();
+        if STEP == 2 {
+            return Ok(());
         }
 
         // Distance Field Pass
@@ -526,6 +558,10 @@ impl ViewNode for VordieNode {
             render_pass.set_render_pipeline(dis_field_pipeline);
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..3, 0..1);
+        }
+
+        if STEP == 3 {
+            return Ok(());
         }
 
         // GI Raycast Pass
@@ -570,6 +606,8 @@ impl ViewNode for VordieNode {
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..3, 0..1);
         }
+
+        // TODO: linear to srgb conversion
 
         Ok(())
     }

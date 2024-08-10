@@ -1,6 +1,5 @@
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
-// #import bevy_pbr::mesh_view_bindings globals
 
 @group(0) @binding(0)
 var u_distance_data: texture_2d<f32>;
@@ -64,7 +63,7 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, aspect: f32, hit_pos: ptr<functio
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let screen_pixel_size: vec2<f32> = vec2<f32>(1024.0, 1024.0);
+    let screen_pixel_size: vec2<f32> = vec2<f32>(1280.0, 720.0);
 
     var pixel_emis: f32 = 0.0;
     var pixel_col: vec3<f32> = vec3<f32>(0.0);

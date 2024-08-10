@@ -13,8 +13,8 @@ fn main() {
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
-                    resolution: (1024., 1024.).into(),
-                    title: "Bevy Magic Light 2D: Minimal Example".into(),
+                    resolution: (1280., 720.).into(),
+                    title: "Vordie: Minimal Example".into(),
                     resizable: false,
                     ..default()
                 }),
@@ -47,34 +47,34 @@ fn setup(
 
     // Light
     commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(50.)).into(),
+        mesh: meshes.add(Circle::new(20.)).into(),
         // 4. Put something bright in a dark environment to see the effect
-        material: materials.add(Color::srgb(5.0, 5.0, 5.0)),
-        transform: Transform::from_translation(Vec3::new(-300., -200., 0.)),
+        material: materials.add(Color::srgb(1.0, 1.0, 1.0)),
+        transform: Transform::from_translation(Vec3::new(-400., -200., 0.)),
         ..default()
     });
 
     // Light occluder
     commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(50.)).into(),
+        mesh: meshes.add(Circle::new(20.)).into(),
         material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(300., 200., 0.)),
+        transform: Transform::from_translation(Vec3::new(400., 200., 0.)),
         ..default()
     });
 
-    // Light occluder
-    commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(50.)).into(),
-        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(-300., 300., 0.)),
-        ..default()
-    });
+    // // Light occluder
+    // commands.spawn(MaterialMesh2dBundle {
+    //     mesh: meshes.add(Circle::new(50.)).into(),
+    //     material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
+    //     transform: Transform::from_translation(Vec3::new(-300., 300., 0.)),
+    //     ..default()
+    // });
 
-    // Light occluder
-    commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(50.)).into(),
-        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(300., -300., 0.)),
-        ..default()
-    });
+    // // Light occluder
+    // commands.spawn(MaterialMesh2dBundle {
+    //     mesh: meshes.add(Circle::new(50.)).into(),
+    //     material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
+    //     transform: Transform::from_translation(Vec3::new(300., -300., 0.)),
+    //     ..default()
+    // });
 }
