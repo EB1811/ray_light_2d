@@ -9,11 +9,13 @@ use ray_light_2d::prelude::*;
 fn main() {
     // Basic setup.
     App::new()
-        .insert_resource(ClearColor(Color::srgba(0.0, 0.0, 0.0, 0.0)))
+        .insert_resource(ClearColor(Color::srgba(0.1, 0.1, 0.1, 0.0)))
+        // ! MSAA needs to be off for the jump flood to work for now
+        .insert_resource(Msaa::Off)
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
-                    resolution: (1280., 720.).into(),
+                    resolution: (800., 800.).into(),
                     title: "Vordie: Minimal Example".into(),
                     resizable: false,
                     ..default()
@@ -50,7 +52,7 @@ fn setup(
         mesh: meshes.add(Circle::new(20.)).into(),
         // 4. Put something bright in a dark environment to see the effect
         material: materials.add(Color::srgb(1.0, 1.0, 1.0)),
-        transform: Transform::from_translation(Vec3::new(-400., -200., 0.)),
+        transform: Transform::from_translation(Vec3::new(-300., -200., 0.)),
         ..default()
     });
 
@@ -58,13 +60,13 @@ fn setup(
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(20.)).into(),
         material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(400., 200., 0.)),
+        transform: Transform::from_translation(Vec3::new(300., 200., 0.)),
         ..default()
     });
 
-    // // Light occluder
+    // Light occluder
     // commands.spawn(MaterialMesh2dBundle {
-    //     mesh: meshes.add(Circle::new(50.)).into(),
+    //     mesh: meshes.add(Circle::new(20.)).into(),
     //     material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
     //     transform: Transform::from_translation(Vec3::new(-300., 300., 0.)),
     //     ..default()

@@ -325,7 +325,7 @@ impl ViewNode for VordieNode {
         }
 
         // Saving the previous texture as emitters and occluders texture
-        let mut emitters_occluders_copy = view_target.main_texture_view().clone();
+        let emitters_occluders_copy = view_target.main_texture_view().clone();
 
         // First pass: Initialize the jump flood algorithm
         {
@@ -397,8 +397,6 @@ impl ViewNode for VordieNode {
             copy_render_pass.set_render_pipeline(init_pipeline);
             copy_render_pass.set_bind_group(0, &bind_group, &[]);
             copy_render_pass.draw(0..3, 0..1);
-
-            emitters_occluders_copy = copy_view.clone();
         }
 
         if STEP == 1 {
@@ -436,14 +434,12 @@ impl ViewNode for VordieNode {
             //     view_target.main_texture().width() as f32,
             //     view_target.main_texture().height() as f32,
             // );
-            let screen_size = Vec2::new(1280., 720.);
+            let screen_size = Vec2::new(800., 800.);
 
-            let passes = f32::max(screen_size.x, screen_size.y)
-                .log2()
-                .div(2.0_f32.log2())
-                .ceil() as i32;
-            // let passes = 4;
-            let stop_at = 100;
+            let passes = f32::max(screen_size.x, screen_size.y).log2().ceil() as i32;
+            // print!("passes: {}", passes);
+            // let passes = 10;
+            let stop_at = 50;
 
             for i in 0..=passes {
                 // Create the destination textures

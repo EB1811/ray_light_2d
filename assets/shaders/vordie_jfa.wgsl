@@ -19,7 +19,8 @@ struct Params {
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let screen_pixel_size: vec2<f32> = vec2<f32>(1280.0, 720.0);
+    // TODO: Make this a input.
+    let screen_pixel_size: vec2<f32> = vec2<f32>(800.0, 800.0);
 
     var closest_dist: f32 = 9999999.9;
     var closest_pos: vec2<f32> = vec2<f32>(0.0, 0.0);
