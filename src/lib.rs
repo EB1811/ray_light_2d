@@ -33,7 +33,6 @@ const STEP: i32 = 4;
 
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct VordieLightSettings {
-    pub u_dis_mod: f32,
     pub u_rays_per_pixel: i32,
     pub u_emission_multi: f32,
     pub u_max_raymarch_steps: i32,
@@ -42,7 +41,6 @@ pub struct VordieLightSettings {
 impl Default for VordieLightSettings {
     fn default() -> Self {
         Self {
-            u_dis_mod: 1.0,
             u_rays_per_pixel: 32,
             u_emission_multi: 1.0,
             u_max_raymarch_steps: 128,
@@ -638,11 +636,17 @@ impl ViewNode for VordieNode {
 
         // GI Raycast Pass
         {
-            let start = std::time::SystemTime::now();
-            let since_the_epoch = start
+            let start1 = std::time::SystemTime::now();
+            let since_the_epoch1 = start1
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("Time went backwards");
-            let mut time_buffer = UniformBuffer::<f32>::from(since_the_epoch.as_millis() as f32);
+            let start2 = std::time::SystemTime::now();
+            let since_the_epoch2 = start2
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards");
+            let mut time_buffer = UniformBuffer::<f32>::from(
+                (since_the_epoch1.as_millis() / (since_the_epoch2.as_millis() - 123)) as f32,
+            );
             time_buffer.write_buffer(&render_device, render_queue);
 
             let view_texture = view_target.post_process_write();

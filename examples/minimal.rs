@@ -9,7 +9,7 @@ use ray_light_2d::prelude::*;
 fn main() {
     // Basic setup.
     App::new()
-        .insert_resource(ClearColor(Color::srgba(0.1, 0.1, 0.1, 0.0)))
+        .insert_resource(ClearColor(Color::srgba(0.0, 0.0, 0.0, 0.0)))
         // ! MSAA needs to be off for the jump flood to work for now
         .insert_resource(Msaa::Off)
         .add_plugins((
@@ -51,8 +51,8 @@ fn setup(
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(20.)).into(),
         // 4. Put something bright in a dark environment to see the effect
-        material: materials.add(Color::srgb(1.0, 1.0, 1.0)),
-        transform: Transform::from_translation(Vec3::new(-300., -200., 0.)),
+        material: materials.add(Color::srgb(1.5, 1.5, 1.5)),
+        transform: Transform::from_translation(Vec3::new(-200., -200., 0.)),
         ..default()
     });
 
@@ -60,17 +60,17 @@ fn setup(
     commands.spawn(MaterialMesh2dBundle {
         mesh: meshes.add(Circle::new(20.)).into(),
         material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(300., 200., 0.)),
+        transform: Transform::from_translation(Vec3::new(200., 200., 0.)),
         ..default()
     });
 
     // Light occluder
-    // commands.spawn(MaterialMesh2dBundle {
-    //     mesh: meshes.add(Circle::new(20.)).into(),
-    //     material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-    //     transform: Transform::from_translation(Vec3::new(-300., 300., 0.)),
-    //     ..default()
-    // });
+    commands.spawn(MaterialMesh2dBundle {
+        mesh: meshes.add(Circle::new(20.)).into(),
+        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
+        transform: Transform::from_translation(Vec3::new(-200., 200., 0.)),
+        ..default()
+    });
 
     // // Light occluder
     // commands.spawn(MaterialMesh2dBundle {

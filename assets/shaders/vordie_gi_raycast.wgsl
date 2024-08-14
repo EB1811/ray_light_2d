@@ -7,7 +7,6 @@ var u_distance_data: texture_2d<f32>;
 var texture_sampler: sampler;
 
 struct VordieLightSettings {
-    u_dis_mod: f32,
     u_rays_per_pixel: i32,
     u_emission_multi: f32,
     u_max_raymarch_steps: i32,
@@ -34,12 +33,11 @@ fn get_surface(uv: vec2<f32>, emissive: ptr<function, f32>, colour: ptr<function
     *colour = emissive_data.rgb;
 }
 
-fn raymarch(origin: vec2<f32>, dir: vec2<f32>, aspect: f32, hit_pos: ptr<function, vec2<f32>>) -> bool {
+fn raymarch(origin: vec2<f32>, dir: vec2<f32>, hit_pos: ptr<function, vec2<f32>>) -> bool {
     var current_dist: f32 = 0.0;
     for (var i: i32 = 0; i < settings.u_max_raymarch_steps; i = i + 1) {
         var sample_point: vec2<f32> = origin + dir * current_dist;
-        sample_point.x = sample_point.x / aspect; // when we sample the distance field we need to convert back to uv space.
-
+        
         // early exit if we hit the edge of the screen.
         if (sample_point.x > 1.0 || sample_point.x < 0.0 || sample_point.y > 1.0 || sample_point.y < 0.0) {
             return false;
@@ -50,7 +48,7 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, aspect: f32, hit_pos: ptr<functio
 
         // we've hit a surface if distance field returns 0 or close to 0 (due to our distance field using a 16-bit float
         // the precision isn't enough to just check against 0).
-        if (dist_to_surface < 0.001) {
+        if (dist_to_surface < 0.0006) {
             *hit_pos = sample_point;
             return true;
         }
@@ -63,15 +61,8 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, aspect: f32, hit_pos: ptr<functio
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let screen_pixel_size: vec2<f32> = vec2<f32>(1280.0, 720.0);
-
     var pixel_emis: f32 = 0.0;
     var pixel_col: vec3<f32> = vec3<f32>(0.0);
-
-    // Convert from uv aspect to world aspect.
-    var uv: vec2<f32> = in.uv;
-    let aspect: f32 = screen_pixel_size.x / screen_pixel_size.y;
-    uv.x *= aspect;
 
     let rand2pi: f32 = random(in.uv * vec2<f32>(time, -time)) * 2.0 * PI;
     let golden_angle: f32 = PI * 0.7639320225; // Magic number for good ray distribution.
@@ -83,10 +74,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         // Get our ray dir by taking the random angle and adding golden_angle * ray number.
         let cur_angle: f32 = rand2pi + golden_angle * f32(i);
         let ray_dir: vec2<f32> = normalize(vec2<f32>(cos(cur_angle), sin(cur_angle)));
-        let ray_origin: vec2<f32> = uv;
+        let ray_origin: vec2<f32> = in.uv;
 
         var hit_pos: vec2<f32>;
-        var hit: bool = raymarch(ray_origin, ray_dir, aspect, &hit_pos);
+        var hit: bool = raymarch(ray_origin, ray_dir, &hit_pos);
         if(hit) {
             var mat_emissive: f32;
             var mat_colour: vec3<f32>;
@@ -101,4 +92,12 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     pixel_emis /= f32(settings.u_rays_per_pixel);
 
     return vec4<f32>(pixel_emis * pixel_col, 1.0);
+
+    // let in_diffuse   = textureSample(u_distance_data, texture_sampler, in.uv);
+    // return vec4<f32>(
+    //     in_diffuse.r,
+    //     in_diffuse.g,
+    //     in_diffuse.b,
+    //     in_diffuse.a
+    // );
 }
