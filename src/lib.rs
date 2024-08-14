@@ -59,12 +59,12 @@ pub struct Params {
 #[derive(Resource)]
 struct VordieLightPipeline {
     sampler: Sampler,
-    init_bind_group_layout: BindGroupLayout,
-    main_bind_group_layout: BindGroupLayout,
+    seed_bind_group_layout: BindGroupLayout,
+    jfa_bind_group_layout: BindGroupLayout,
     dis_field_bind_group_layout: BindGroupLayout,
     gi_raycast_bind_group_layout: BindGroupLayout,
-    init_pipeline_id: CachedRenderPipelineId,
-    main_pipeline_id: CachedRenderPipelineId,
+    seed_pipeline_id: CachedRenderPipelineId,
+    jfa_pipeline_id: CachedRenderPipelineId,
     dis_field_pipeline_id: CachedRenderPipelineId,
     gi_raycast_pipeline_id: CachedRenderPipelineId,
 }
@@ -73,7 +73,7 @@ impl FromWorld for VordieLightPipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.get_resource::<RenderDevice>().unwrap().clone();
 
-        let init_bind_group_layout = render_device.create_bind_group_layout(
+        let seed_bind_group_layout = render_device.create_bind_group_layout(
             "vordie_light_init_group_layout",
             &BindGroupLayoutEntries::sequential(
                 // The layout entries will only be visible in the fragment stage
@@ -88,7 +88,7 @@ impl FromWorld for VordieLightPipeline {
                 ),
             ),
         );
-        let main_bind_group_layout = render_device.create_bind_group_layout(
+        let jfa_bind_group_layout = render_device.create_bind_group_layout(
             "vordie_light_main_group_layout",
             &BindGroupLayoutEntries::sequential(
                 // The layout entries will only be visible in the fragment stage
@@ -141,18 +141,18 @@ impl FromWorld for VordieLightPipeline {
         );
 
         let assets_server = world.resource::<AssetServer>();
-        let init_shader = assets_server.load("shaders/vordie_init.wgsl");
-        let main_shader = assets_server.load("shaders/vordie_jfa.wgsl");
+        let seed_shader = assets_server.load("shaders/vordie_seed.wgsl");
+        let jfa_shader = assets_server.load("shaders/vordie_jfa.wgsl");
         let dis_field_shader = assets_server.load("shaders/vordie_dis_field.wgsl");
         let gi_raycast_shader = assets_server.load("shaders/vordie_gi_raycast.wgsl");
 
         let pipeline_cache = world.get_resource::<PipelineCache>().unwrap();
-        let init_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-            label: Some("vordie_init_pipeline".into()),
-            layout: vec![init_bind_group_layout.clone()],
+        let seed_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("vordie_seed_pipeline".into()),
+            layout: vec![seed_bind_group_layout.clone()],
             vertex: fullscreen_shader_vertex_state(),
             fragment: Some(FragmentState {
-                shader: init_shader.clone(),
+                shader: seed_shader.clone(),
                 shader_defs: vec![],
                 entry_point: "fragment".into(),
                 targets: vec![Some(ColorTargetState {
@@ -171,15 +171,19 @@ impl FromWorld for VordieLightPipeline {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: MultisampleState::default(),
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             push_constant_ranges: vec![],
         });
-        let main_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-            label: Some("vordie_main_pipeline".into()),
-            layout: vec![main_bind_group_layout.clone()],
+        let jfa_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("vordie_jfa_pipeline".into()),
+            layout: vec![jfa_bind_group_layout.clone()],
             vertex: fullscreen_shader_vertex_state(),
             fragment: Some(FragmentState {
-                shader: main_shader.clone(),
+                shader: jfa_shader.clone(),
                 shader_defs: vec![],
                 entry_point: "fragment".into(),
                 targets: vec![Some(ColorTargetState {
@@ -198,7 +202,11 @@ impl FromWorld for VordieLightPipeline {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: MultisampleState::default(),
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             push_constant_ranges: vec![],
         });
         let dis_field_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
@@ -225,7 +233,11 @@ impl FromWorld for VordieLightPipeline {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: MultisampleState::default(),
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             push_constant_ranges: vec![],
         });
         let gi_raycast_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
@@ -252,7 +264,11 @@ impl FromWorld for VordieLightPipeline {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: MultisampleState::default(),
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             push_constant_ranges: vec![],
         });
 
@@ -261,12 +277,12 @@ impl FromWorld for VordieLightPipeline {
 
         Self {
             sampler,
-            init_bind_group_layout,
-            main_bind_group_layout,
+            seed_bind_group_layout,
+            jfa_bind_group_layout,
             dis_field_bind_group_layout,
             gi_raycast_bind_group_layout,
-            init_pipeline_id: init_cached,
-            main_pipeline_id: main_cached,
+            seed_pipeline_id: seed_cached,
+            jfa_pipeline_id: jfa_cached,
             dis_field_pipeline_id: dis_field_cached,
             gi_raycast_pipeline_id: gi_raycast_cached,
         }
@@ -295,12 +311,12 @@ impl ViewNode for VordieNode {
         let pipeline_cache = world.resource::<PipelineCache>();
 
         let Some(init_pipeline) =
-            pipeline_cache.get_render_pipeline(vordie_pipeline.init_pipeline_id)
+            pipeline_cache.get_render_pipeline(vordie_pipeline.seed_pipeline_id)
         else {
             return Ok(());
         };
         let Some(main_pipeline) =
-            pipeline_cache.get_render_pipeline(vordie_pipeline.main_pipeline_id)
+            pipeline_cache.get_render_pipeline(vordie_pipeline.jfa_pipeline_id)
         else {
             return Ok(());
         };
@@ -354,7 +370,7 @@ impl ViewNode for VordieNode {
 
             let bind_group = render_context.render_device().create_bind_group(
                 "post_process_bind_group",
-                &vordie_pipeline.init_bind_group_layout,
+                &vordie_pipeline.seed_bind_group_layout,
                 &BindGroupEntries::sequential((
                     // Make sure to use the source view
                     view_texture.source,
@@ -477,7 +493,7 @@ impl ViewNode for VordieNode {
 
                 let bind_group = render_context.render_device().create_bind_group(
                     "post_process_bind_group",
-                    &vordie_pipeline.main_bind_group_layout,
+                    &vordie_pipeline.jfa_bind_group_layout,
                     &BindGroupEntries::sequential((
                         // Make sure to use the source view
                         &source,
