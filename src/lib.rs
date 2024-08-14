@@ -29,7 +29,7 @@ use bevy::{
 };
 
 // Testing by step
-const STEP: i32 = 2;
+const STEP: i32 = 4;
 
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct VordieLightSettings {
@@ -59,10 +59,12 @@ pub struct Params {
 #[derive(Resource)]
 struct VordieLightPipeline {
     sampler: Sampler,
+    emiters_occs_bind_group_layout: BindGroupLayout,
     seed_bind_group_layout: BindGroupLayout,
     jfa_bind_group_layout: BindGroupLayout,
     dis_field_bind_group_layout: BindGroupLayout,
     gi_raycast_bind_group_layout: BindGroupLayout,
+    emiters_occs_pipeline_id: CachedRenderPipelineId,
     seed_pipeline_id: CachedRenderPipelineId,
     jfa_pipeline_id: CachedRenderPipelineId,
     dis_field_pipeline_id: CachedRenderPipelineId,
@@ -73,6 +75,19 @@ impl FromWorld for VordieLightPipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.get_resource::<RenderDevice>().unwrap().clone();
 
+        let emiters_occs_bind_group_layout = render_device.create_bind_group_layout(
+            "vordie_light_emiters_occs_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                // The layout entries will only be visible in the fragment stage
+                ShaderStages::FRAGMENT,
+                (
+                    // The screen texture
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // The sampler that will be used to sample the screen texture
+                    sampler(SamplerBindingType::NonFiltering),
+                ),
+            ),
+        );
         let seed_bind_group_layout = render_device.create_bind_group_layout(
             "vordie_light_init_group_layout",
             &BindGroupLayoutEntries::sequential(
@@ -141,12 +156,44 @@ impl FromWorld for VordieLightPipeline {
         );
 
         let assets_server = world.resource::<AssetServer>();
+        let emiters_occs_shader = assets_server.load("shaders/vordie_emiters_occs.wgsl");
         let seed_shader = assets_server.load("shaders/vordie_seed.wgsl");
         let jfa_shader = assets_server.load("shaders/vordie_jfa.wgsl");
         let dis_field_shader = assets_server.load("shaders/vordie_dis_field.wgsl");
         let gi_raycast_shader = assets_server.load("shaders/vordie_gi_raycast.wgsl");
 
         let pipeline_cache = world.get_resource::<PipelineCache>().unwrap();
+        let emiters_occs_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("vordie_emiters_occs_pipeline".into()),
+            layout: vec![emiters_occs_bind_group_layout.clone()],
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: emiters_occs_shader.clone(),
+                shader_defs: vec![],
+                entry_point: "fragment".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                unclipped_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            push_constant_ranges: vec![],
+        });
         let seed_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some("vordie_seed_pipeline".into()),
             layout: vec![seed_bind_group_layout.clone()],
@@ -277,10 +324,12 @@ impl FromWorld for VordieLightPipeline {
 
         Self {
             sampler,
+            emiters_occs_bind_group_layout,
             seed_bind_group_layout,
             jfa_bind_group_layout,
             dis_field_bind_group_layout,
             gi_raycast_bind_group_layout,
+            emiters_occs_pipeline_id: emiters_occs_cached,
             seed_pipeline_id: seed_cached,
             jfa_pipeline_id: jfa_cached,
             dis_field_pipeline_id: dis_field_cached,
@@ -310,7 +359,12 @@ impl ViewNode for VordieNode {
         let vordie_pipeline = world.resource::<VordieLightPipeline>();
         let pipeline_cache = world.resource::<PipelineCache>();
 
-        let Some(init_pipeline) =
+        let Some(emiters_occs_pipeline) =
+            pipeline_cache.get_render_pipeline(vordie_pipeline.emiters_occs_pipeline_id)
+        else {
+            return Ok(());
+        };
+        let Some(seed_pipeline) =
             pipeline_cache.get_render_pipeline(vordie_pipeline.seed_pipeline_id)
         else {
             return Ok(());
@@ -336,36 +390,61 @@ impl ViewNode for VordieNode {
             return Ok(());
         };
 
+        // Creating emitters and occluders texture
+        let emitters_occluders_descriptor = TextureDescriptor {
+            label: Some("emitters_occluders_texture"),
+            size: Extent3d {
+                width: view_target.main_texture().width(),
+                height: view_target.main_texture().height(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba16Float,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+        let emitters_occluders_view = render_context
+            .render_device()
+            .create_texture(&emitters_occluders_descriptor)
+            .create_view(&TextureViewDescriptor {
+                ..Default::default()
+            });
+        {
+            let view_texture = view_target.main_texture_view();
+
+            let bind_group = render_context.render_device().create_bind_group(
+                "emitters_occluders_bind_group",
+                &vordie_pipeline.emiters_occs_bind_group_layout,
+                &BindGroupEntries::sequential((
+                    view_texture,
+                    // Use the sampler created for the pipeline
+                    &vordie_pipeline.sampler,
+                )),
+            );
+            let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("emitters_occluders"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &emitters_occluders_view,
+                    resolve_target: None,
+                    ops: Operations::default(),
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            render_pass.set_render_pipeline(emiters_occs_pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+        }
+
         if STEP == 0 {
             return Ok(());
         }
 
-        // Saving the previous texture as emitters and occluders texture
-        let emitters_occluders_copy = view_target.main_texture_view().clone();
-
-        // First pass: Initialize the jump flood algorithm
+        // Initialize the jump flood algorithm
         {
-            let copy_texture_descriptor = TextureDescriptor {
-                label: Some("jfa_destination_texture"),
-                size: Extent3d {
-                    width: view_target.main_texture().width(),
-                    height: view_target.main_texture().height(),
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::Rgba16Float,
-                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            };
-            let copy_view = render_context
-                .render_device()
-                .create_texture(&copy_texture_descriptor)
-                .create_view(&TextureViewDescriptor {
-                    ..Default::default()
-                });
-
             let view_texture = view_target.post_process_write();
 
             let bind_group = render_context.render_device().create_bind_group(
@@ -391,28 +470,9 @@ impl ViewNode for VordieNode {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            render_pass.set_render_pipeline(init_pipeline);
+            render_pass.set_render_pipeline(seed_pipeline);
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..3, 0..1);
-
-            drop(render_pass);
-
-            // Again we need to copy the texture to use it as emitters and occluders
-            let mut copy_render_pass =
-                render_context.begin_tracked_render_pass(RenderPassDescriptor {
-                    label: Some("vordie_light_init"),
-                    color_attachments: &[Some(RenderPassColorAttachment {
-                        view: &copy_view,
-                        resolve_target: None,
-                        ops: Operations::default(),
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-            copy_render_pass.set_render_pipeline(init_pipeline);
-            copy_render_pass.set_bind_group(0, &bind_group, &[]);
-            copy_render_pass.draw(0..3, 0..1);
         }
 
         if STEP == 1 {
@@ -598,7 +658,7 @@ impl ViewNode for VordieNode {
                     // Set the settings binding, including the offset
                     settings_binding.clone(),
                     // Set the emitters and occluders texture
-                    &emitters_occluders_copy,
+                    &emitters_occluders_view,
                     // Set the time
                     time_buffer.binding().unwrap(),
                 )),

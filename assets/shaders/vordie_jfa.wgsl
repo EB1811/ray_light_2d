@@ -7,7 +7,11 @@ var screen_texture: texture_2d<f32>;
 var texture_sampler: sampler;
 
 struct VordieLightSettings {
-    u_dis_mod: f32
+    u_dis_mod: f32,
+    u_rays_per_pixel: i32,
+    u_emission_multi: f32,
+    u_max_raymarch_steps: i32,
+    u_dist_mod: f32,
 }
 @group(0) @binding(2) var<uniform> settings: VordieLightSettings;
 
