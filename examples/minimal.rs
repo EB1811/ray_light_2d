@@ -40,27 +40,27 @@ fn setup(
                 hdr: true, // 1. HDR is required for bloom
                 ..default()
             },
-            // tonemapping: Tonemapping::TonyMcMapface, // 2. Using a tonemapper that desaturates to white is recommended
+            tonemapping: Tonemapping::TonyMcMapface, // 2. Using a tonemapper that desaturates to white is recommended
             ..default()
         },
-        // BloomSettings::default(), // 3. Enable bloom for the camera
+        BloomSettings::NATURAL, // 3. Enable bloom for the camera
         VordieLightSettings { ..default() },
     ));
 
     // Light
     commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(20.)).into(),
+        mesh: meshes.add(Circle::new(10.)).into(),
         // 4. Put something bright in a dark environment to see the effect
-        material: materials.add(Color::srgb(1.5, 1.5, 1.5)),
+        material: materials.add(Color::srgb(0.0, 0.5, 1.5)),
         transform: Transform::from_translation(Vec3::new(-200., -200., 0.)),
         ..default()
     });
 
-    // Light occluder
+    // Light
     commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(20.)).into(),
-        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(200., 200., 0.)),
+        mesh: meshes.add(Circle::new(10.)).into(),
+        material: materials.add(Color::srgb(1.5, 0.0, 0.5)),
+        transform: Transform::from_translation(Vec3::new(200., 100., 0.)),
         ..default()
     });
 
@@ -72,11 +72,11 @@ fn setup(
         ..default()
     });
 
-    // // Light occluder
-    // commands.spawn(MaterialMesh2dBundle {
-    //     mesh: meshes.add(Circle::new(50.)).into(),
-    //     material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-    //     transform: Transform::from_translation(Vec3::new(300., -300., 0.)),
-    //     ..default()
-    // });
+    // Light occluder
+    commands.spawn(MaterialMesh2dBundle {
+        mesh: meshes.add(Circle::new(20.)).into(),
+        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
+        transform: Transform::from_translation(Vec3::new(200., -100., 0.)),
+        ..default()
+    });
 }

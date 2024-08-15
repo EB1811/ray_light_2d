@@ -48,7 +48,7 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, hit_pos: ptr<function, vec2<f32>>
 
         // we've hit a surface if distance field returns 0 or close to 0 (due to our distance field using a 16-bit float
         // the precision isn't enough to just check against 0).
-        if (dist_to_surface < 0.0006) {
+        if (dist_to_surface < 0.001) {
             *hit_pos = sample_point;
             return true;
         }
@@ -57,6 +57,16 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, hit_pos: ptr<function, vec2<f32>>
         current_dist = current_dist + dist_to_surface;
     }
     return false;
+}
+
+fn lin_to_srgb(color: vec4<f32>) -> vec3<f32> {
+    let x: vec3<f32> = color.rgb * 12.92;
+    let y: vec3<f32> = 1.055 * pow(clamp(color.rgb, vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(1.0, 1.0, 1.0)), vec3<f32>(0.4166667, 0.4166667, 0.4166667)) - 0.055;
+    var clr: vec3<f32> = color.rgb;
+    clr.r = select(y.r, x.r, color.r < 0.0031308);
+    clr.g = select(y.g, x.g, color.g < 0.0031308);
+    clr.b = select(y.b, x.b, color.b < 0.0031308);
+    return clr;
 }
 
 @fragment
@@ -91,13 +101,13 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     pixel_col /= pixel_emis;
     pixel_emis /= f32(settings.u_rays_per_pixel);
 
-    return vec4<f32>(pixel_emis * pixel_col, 1.0);
+    var col = pixel_emis * pixel_col;
 
-    // let in_diffuse   = textureSample(u_distance_data, texture_sampler, in.uv);
-    // return vec4<f32>(
-    //     in_diffuse.r,
-    //     in_diffuse.g,
-    //     in_diffuse.b,
-    //     in_diffuse.a
-    // );
+    // Color correction and filters.
+    // TODO: Make this a parameter, or another shader pass.
+    col = col * 0.7;
+    col = col * (1.0 / (1.0 + col * 0.5));
+
+    return vec4<f32>(lin_to_srgb(vec4<f32>(col, 1.0)), 1.0);
+    // return vec4<f32>(col, 1.0);
 }

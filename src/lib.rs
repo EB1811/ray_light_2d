@@ -1,5 +1,3 @@
-use std::ops::Div;
-
 use bevy::{
     core_pipeline::{
         core_2d::graph::{Core2d, Node2d},
@@ -11,18 +9,14 @@ use bevy::{
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
-        render_asset::RenderAssets,
         render_graph::{
-            self, NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode,
-            ViewNodeRunner,
+            NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode, ViewNodeRunner,
         },
-        render_phase::TrackedRenderPass,
         render_resource::{
             binding_types::{sampler, texture_2d, uniform_buffer},
             *,
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
-        texture::{BevyDefault, CachedTexture, TextureCache},
         view::ViewTarget,
         RenderApp,
     },
@@ -43,7 +37,7 @@ impl Default for VordieLightSettings {
         Self {
             u_rays_per_pixel: 32,
             u_emission_multi: 1.0,
-            u_max_raymarch_steps: 128,
+            u_max_raymarch_steps: 64,
             u_dist_mod: 1.0,
         }
     }
@@ -51,6 +45,7 @@ impl Default for VordieLightSettings {
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct Params {
+    pub screen_pixel_size: Vec2,
     pub offset: f32,
 }
 
@@ -504,11 +499,10 @@ impl ViewNode for VordieNode {
                 });
 
             // Temp fixed screen size
-            //   let screen_size = Vec2::new(
-            //     view_target.main_texture().width() as f32,
-            //     view_target.main_texture().height() as f32,
-            // );
-            let screen_size = Vec2::new(800., 800.);
+            let screen_size = Vec2::new(
+                (view_target.main_texture().width() / 2) as f32,
+                (view_target.main_texture().height() / 2) as f32,
+            );
 
             let passes = f32::max(screen_size.x, screen_size.y).log2().ceil() as i32;
             // print!("passes: {}", passes);
@@ -546,7 +540,10 @@ impl ViewNode for VordieNode {
 
                 let offset = 2f32.powi(passes - i - 1);
 
-                let mut params_buffer = UniformBuffer::<Params>::from(Params { offset });
+                let mut params_buffer = UniformBuffer::<Params>::from(Params {
+                    screen_pixel_size: screen_size,
+                    offset,
+                });
                 params_buffer.write_buffer(&render_device, render_queue);
 
                 let bind_group = render_context.render_device().create_bind_group(
