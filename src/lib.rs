@@ -1,4 +1,5 @@
 use bevy::{
+    core::FrameCount,
     core_pipeline::{
         core_2d::graph::{Core2d, Node2d},
         fullscreen_vertex_shader::fullscreen_shader_vertex_state,
@@ -6,6 +7,7 @@ use bevy::{
     ecs::query::QueryItem,
     prelude::*,
     render::{
+        camera::ExtractedCamera,
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
@@ -17,13 +19,14 @@ use bevy::{
             *,
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
-        view::ViewTarget,
-        RenderApp,
+        texture::{BevyDefault, CachedTexture, TextureCache},
+        view::{ExtractedView, ViewTarget},
+        Render, RenderApp, RenderSet,
     },
 };
 
 // Testing by step
-const STEP: i32 = 4;
+const STEP: i32 = 5;
 
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
 pub struct VordieLightSettings {
@@ -35,10 +38,67 @@ pub struct VordieLightSettings {
 impl Default for VordieLightSettings {
     fn default() -> Self {
         Self {
-            u_rays_per_pixel: 32,
+            u_rays_per_pixel: 16,
             u_emission_multi: 1.0,
             u_max_raymarch_steps: 64,
             u_dist_mod: 1.0,
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct GlobalIHistoryTextures {
+    write: CachedTexture,
+    read: CachedTexture,
+}
+
+fn prepare_gi_history_textures(
+    mut commands: Commands,
+    mut texture_cache: ResMut<TextureCache>,
+    render_device: Res<RenderDevice>,
+    frame_count: Res<FrameCount>,
+    views: Query<(Entity, &ExtractedCamera, &ExtractedView), With<VordieLightSettings>>,
+) {
+    for (entity, camera, view) in &views {
+        if let Some(physical_target_size) = camera.physical_target_size {
+            let mut texture_descriptor = TextureDescriptor {
+                label: None,
+                size: Extent3d {
+                    depth_or_array_layers: 1,
+                    width: physical_target_size.x,
+                    height: physical_target_size.y,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: if view.hdr {
+                    ViewTarget::TEXTURE_FORMAT_HDR
+                } else {
+                    TextureFormat::bevy_default()
+                },
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            };
+
+            texture_descriptor.label = Some("gi_history_1_texture");
+            let history_1_texture = texture_cache.get(&render_device, texture_descriptor.clone());
+
+            texture_descriptor.label = Some("gi_history_2_texture");
+            let history_2_texture = texture_cache.get(&render_device, texture_descriptor);
+
+            let textures = if frame_count.0 % 2 == 0 {
+                GlobalIHistoryTextures {
+                    write: history_1_texture,
+                    read: history_2_texture,
+                }
+            } else {
+                GlobalIHistoryTextures {
+                    write: history_2_texture,
+                    read: history_1_texture,
+                }
+            };
+
+            commands.entity(entity).insert(textures);
         }
     }
 }
@@ -57,11 +117,14 @@ struct VordieLightPipeline {
     jfa_bind_group_layout: BindGroupLayout,
     dis_field_bind_group_layout: BindGroupLayout,
     gi_raycast_bind_group_layout: BindGroupLayout,
+    denoise_bind_group_layout: BindGroupLayout,
+
     emiters_occs_pipeline_id: CachedRenderPipelineId,
     seed_pipeline_id: CachedRenderPipelineId,
     jfa_pipeline_id: CachedRenderPipelineId,
     dis_field_pipeline_id: CachedRenderPipelineId,
     gi_raycast_pipeline_id: CachedRenderPipelineId,
+    denoise_pipeline_id: CachedRenderPipelineId,
 }
 
 impl FromWorld for VordieLightPipeline {
@@ -142,8 +205,29 @@ impl FromWorld for VordieLightPipeline {
                     uniform_buffer::<VordieLightSettings>(false),
                     // Emitter and occluder texture
                     texture_2d(TextureSampleType::Float { filterable: false }),
+                    // GI History (read)
+                    texture_2d(TextureSampleType::Float { filterable: false }),
                     // Time
                     uniform_buffer::<f32>(false),
+                ),
+            ),
+        );
+        let denoise_bind_group_layout = render_device.create_bind_group_layout(
+            "vordie_light_denoise_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                // The layout entries will only be visible in the fragment stage
+                ShaderStages::FRAGMENT,
+                (
+                    // The screen texture
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // The sampler that will be used to sample the screen texture
+                    sampler(SamplerBindingType::NonFiltering),
+                    // GI History (read)
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    // The settings uniform that will control the effect
+                    uniform_buffer::<VordieLightSettings>(false),
+                    // Screen pixel size
+                    uniform_buffer::<Params>(false),
                 ),
             ),
         );
@@ -154,6 +238,7 @@ impl FromWorld for VordieLightPipeline {
         let jfa_shader = assets_server.load("shaders/vordie_jfa.wgsl");
         let dis_field_shader = assets_server.load("shaders/vordie_dis_field.wgsl");
         let gi_raycast_shader = assets_server.load("shaders/vordie_gi_raycast.wgsl");
+        let denoise_shader = assets_server.load("shaders/vordie_denoise.wgsl");
 
         let pipeline_cache = world.get_resource::<PipelineCache>().unwrap();
         let emiters_occs_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
@@ -311,6 +396,44 @@ impl FromWorld for VordieLightPipeline {
             },
             push_constant_ranges: vec![],
         });
+        let denoise_cached = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("vordie_denoise_pipeline".into()),
+            layout: vec![denoise_bind_group_layout.clone()],
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: denoise_shader.clone(),
+                shader_defs: vec![],
+                entry_point: "fragment".into(),
+                targets: vec![
+                    Some(ColorTargetState {
+                        format: TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    }),
+                    Some(ColorTargetState {
+                        format: TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    }),
+                ],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                unclipped_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            push_constant_ranges: vec![],
+        });
 
         // We can create the sampler here since it won't change at runtime and doesn't depend on the view.
         let sampler = render_device.create_sampler(&SamplerDescriptor::default());
@@ -322,11 +445,14 @@ impl FromWorld for VordieLightPipeline {
             jfa_bind_group_layout,
             dis_field_bind_group_layout,
             gi_raycast_bind_group_layout,
+            denoise_bind_group_layout,
+
             emiters_occs_pipeline_id: emiters_occs_cached,
             seed_pipeline_id: seed_cached,
             jfa_pipeline_id: jfa_cached,
             dis_field_pipeline_id: dis_field_cached,
             gi_raycast_pipeline_id: gi_raycast_cached,
+            denoise_pipeline_id: denoise_cached,
         }
     }
 }
@@ -338,6 +464,7 @@ impl ViewNode for VordieNode {
     // This query will only run on the view entity
     type ViewQuery = (
         &'static ViewTarget,
+        &'static GlobalIHistoryTextures,
         // This makes sure the node only runs on cameras with the VordieLightSettings component
         &'static VordieLightSettings,
     );
@@ -346,7 +473,7 @@ impl ViewNode for VordieNode {
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext,
-        (view_target, _vordie_light_settings): QueryItem<Self::ViewQuery>,
+        (view_target, gi_history_textures, _vordie_light_settings): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
         let vordie_pipeline = world.resource::<VordieLightPipeline>();
@@ -377,6 +504,11 @@ impl ViewNode for VordieNode {
         else {
             return Ok(());
         };
+        let Some(denoise_pipeline) =
+            pipeline_cache.get_render_pipeline(vordie_pipeline.denoise_pipeline_id)
+        else {
+            return Ok(());
+        };
 
         let settings_uniforms = world.resource::<ComponentUniforms<VordieLightSettings>>();
         let Some(settings_binding) = settings_uniforms.uniforms().binding() else {
@@ -387,8 +519,8 @@ impl ViewNode for VordieNode {
         let emitters_occluders_descriptor = TextureDescriptor {
             label: Some("emitters_occluders_texture"),
             size: Extent3d {
-                width: view_target.main_texture().width(),
-                height: view_target.main_texture().height(),
+                width: view_target.main_texture().width() / 2,
+                height: view_target.main_texture().height() / 2,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -480,8 +612,8 @@ impl ViewNode for VordieNode {
             let prev_texture_descriptor = TextureDescriptor {
                 label: Some("jfa_source_texture"),
                 size: Extent3d {
-                    width: 1280,
-                    height: 720,
+                    width: view_target.main_texture().width() / 2,
+                    height: view_target.main_texture().width() / 2,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -498,7 +630,6 @@ impl ViewNode for VordieNode {
                     ..Default::default()
                 });
 
-            // Temp fixed screen size
             let screen_size = Vec2::new(
                 (view_target.main_texture().width() / 2) as f32,
                 (view_target.main_texture().height() / 2) as f32,
@@ -514,8 +645,8 @@ impl ViewNode for VordieNode {
                 let destination_texture_descriptor = TextureDescriptor {
                     label: Some("jfa_destination_texture"),
                     size: Extent3d {
-                        width: 1280,
-                        height: 720,
+                        width: view_target.main_texture().width() / 2,
+                        height: view_target.main_texture().width() / 2,
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
@@ -637,12 +768,16 @@ impl ViewNode for VordieNode {
             let since_the_epoch1 = start1
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("Time went backwards");
-            let start2 = std::time::SystemTime::now();
-            let since_the_epoch2 = start2
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("Time went backwards");
             let mut time_buffer = UniformBuffer::<f32>::from(
-                (since_the_epoch1.as_millis() / (since_the_epoch2.as_millis() - 123)) as f32,
+                since_the_epoch1
+                    .as_millis()
+                    .to_string()
+                    .chars()
+                    .last()
+                    .unwrap()
+                    .to_digit(10)
+                    .unwrap() as f32
+                    + 1.0 / 5.0,
             );
             time_buffer.write_buffer(&render_device, render_queue);
 
@@ -660,6 +795,8 @@ impl ViewNode for VordieNode {
                     settings_binding.clone(),
                     // Set the emitters and occluders texture
                     &emitters_occluders_view,
+                    // Past frames
+                    &gi_history_textures.read.default_view,
                     // Set the time
                     time_buffer.binding().unwrap(),
                 )),
@@ -680,7 +817,61 @@ impl ViewNode for VordieNode {
             render_pass.draw(0..3, 0..1);
         }
 
-        // TODO: linear to srgb conversion
+        if STEP == 4 {
+            return Ok(());
+        }
+
+        // Denoise Pass
+        {
+            let view_texture = view_target.post_process_write();
+
+            let mut params_buffer = UniformBuffer::<Params>::from(Params {
+                screen_pixel_size: Vec2::new(
+                    (view_target.main_texture().width() / 2) as f32,
+                    (view_target.main_texture().height() / 2) as f32,
+                ),
+                offset: 0.0,
+            });
+            params_buffer.write_buffer(&render_device, render_queue);
+
+            let bind_group = render_context.render_device().create_bind_group(
+                "denoise_bind_group",
+                &vordie_pipeline.denoise_bind_group_layout,
+                &BindGroupEntries::sequential((
+                    // Make sure to use the source view
+                    view_texture.source,
+                    // Use the sampler created for the pipeline
+                    &vordie_pipeline.sampler,
+                    // Past frames
+                    &gi_history_textures.read.default_view,
+                    // Set the settings binding, including the offset
+                    settings_binding.clone(),
+                    // Set the params binding
+                    params_buffer.binding().unwrap(),
+                )),
+            );
+            let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("vordie_light_init"),
+                color_attachments: &[
+                    Some(RenderPassColorAttachment {
+                        view: view_texture.destination,
+                        resolve_target: None,
+                        ops: Operations::default(),
+                    }),
+                    Some(RenderPassColorAttachment {
+                        view: &gi_history_textures.write.default_view,
+                        resolve_target: None,
+                        ops: Operations::default(),
+                    }),
+                ],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            render_pass.set_render_pipeline(denoise_pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+        }
 
         Ok(())
     }
@@ -710,6 +901,10 @@ impl Plugin for VordieLight2DPlugin {
         };
 
         render_app
+            .add_systems(
+                Render,
+                prepare_gi_history_textures.in_set(RenderSet::PrepareResources),
+            )
             .add_render_graph_node::<ViewNodeRunner<VordieNode>>(Core2d, LightPass2DRenderLabel)
             .add_render_graph_edges(
                 Core2d,
