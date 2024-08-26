@@ -46,15 +46,15 @@ fn get_surface(uv: vec2<f32>, ray_origin: vec2<f32>) -> SurfaceResult {
     let color_by_dist = dist_tonemap(emissive_data.rgb, distance(ray_origin*screen_pixel_size, uv*screen_pixel_size));
     
     return SurfaceResult(
-      max(color_by_dist.r, max(color_by_dist.g, color_by_dist.b)) * settings.u_emission_multi,
-      color_by_dist.rgb
+      max(emissive_data.r, max(emissive_data.g, emissive_data.b)) * settings.u_emission_multi,
+      emissive_data.rgb
     );
 }
 
 struct RaymarchResult {
     hit: bool,
     hit_pos: vec2<f32>,
-    random_pixel_pos: vec2<f32>,
+    ray_dist: f32,
 }
 fn raymarch(origin: vec2<f32>, dir: vec2<f32>, time: f32, reso: vec2<f32>) -> RaymarchResult {
     var current_dist: f32 = 0.0;
@@ -66,7 +66,7 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, time: f32, reso: vec2<f32>) -> Ra
             return RaymarchResult(
                 false,
                 vec2<f32>(0.0),
-                vec2<f32>(0.0),
+                0.0,
             );
         }
 
@@ -83,8 +83,7 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, time: f32, reso: vec2<f32>) -> Ra
             return RaymarchResult(
                 true,
                 sample_point,
-                // random_pixel_pos,
-                vec2<f32>(0.0),
+                current_dist,
             );
         }
 
@@ -97,8 +96,28 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, time: f32, reso: vec2<f32>) -> Ra
     return RaymarchResult(
         false,
         vec2<f32>(0.0),
-        vec2<f32>(0.0),
+        0.0,
     );
+}
+
+fn get_last_frame_data(uv: vec2<f32>, reso: vec2<f32>) -> SurfaceResult {
+  var last_emission: f32 = 0.0;
+  var last_col: vec3<f32> = vec3<f32>(0.0);
+  
+  for(var x: f32 = -1.0; x <= 1.0; x += 1.0) {
+      for(var y: f32 = -1.0; y <= 1.0; y += 1.0) {
+          let pixel = textureSample(history_texture, texture_sampler, uv + vec2<f32>(x, y) / reso);
+          if(pixel.a > last_emission){
+              last_emission = pixel.a;
+              last_col = pixel.rgb;
+          }
+      }
+  }
+
+  return SurfaceResult(
+    last_emission,
+    last_col
+  );
 }
 
 fn lin_to_srgb(color: vec4<f32>) -> vec3<f32> {
@@ -138,12 +157,29 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             // Also collect the random pixel for GI.
             // rand_pixel_col += textureSample(history_texture, texture_sampler, ray_res.random_pixel_pos).rgb;
 
-            pixel_emis += pixel_surface.emissive;
-            pixel_col += pixel_surface.colour;
+            // GI using nearest pixels from last frame.
+            var last_emission: f32 = 0.0;
+            var last_col: vec3<f32> = vec3<f32>(0.0);
+            // Don't want emissive surfaces themselves to bounce light
+            if(pixel_surface.emissive < 0.5 / max(reso.x, reso.y)) {
+                let last_frame_data: SurfaceResult = get_last_frame_data(ray_res.hit_pos, reso);
+                last_emission = last_frame_data.emissive;
+                last_col = last_frame_data.colour;
+            }
+            // So light doesn't bounce off the surface it was emitted from.
+            if(ray_res.ray_dist < 0.5 / max(reso.x, reso.y)) {
+                last_emission = 0.0;
+            }
+
+            pixel_emis += pixel_surface.emissive + last_emission;
+            pixel_col += (pixel_surface.colour + last_col) * (pixel_surface.emissive + last_emission);
         }
     }
 
-    var col = (pixel_col / pixel_emis) * (pixel_emis / f32(settings.u_rays_per_pixel));
+    pixel_emis /= f32(settings.u_rays_per_pixel);
+    pixel_col /= f32(settings.u_rays_per_pixel);
+
+    // var col = (pixel_col / pixel_emis) * (pixel_emis / f32(settings.u_rays_per_pixel));
 
     // Add the GI using a little bit of the random pixel color.
     // rand_pixel_col /= f32(settings.u_rays_per_pixel);
@@ -153,8 +189,9 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // Color correction and filters.
     // TODO: Make this a parameter, or another shader pass.
-    // col = col * 0.8;
-    // col = col * (1.0 / (1.0 + col * 0.5));
+    // pixel_col *= 0.8;
+    // pixel_col *= (1.0 / (1.0 + pixel_col * 0.5));
 
-    return vec4<f32>(lin_to_srgb(vec4<f32>(col, 1.0)), 1.0);
+    // Emissive in alpha.
+    return vec4<f32>(pixel_col, pixel_emis);
 }

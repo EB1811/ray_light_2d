@@ -38,7 +38,7 @@ pub struct VordieLightSettings {
 impl Default for VordieLightSettings {
     fn default() -> Self {
         Self {
-            u_rays_per_pixel: 16,
+            u_rays_per_pixel: 8,
             u_emission_multi: 1.0,
             u_max_raymarch_steps: 64,
             u_dist_mod: 1.0,

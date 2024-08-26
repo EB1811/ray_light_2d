@@ -64,12 +64,12 @@ fn setup(
     });
 
     // Light
-    // commands.spawn(MaterialMesh2dBundle {
-    //     mesh: meshes.add(Circle::new(10.)).into(),
-    //     material: materials.add(Color::srgb(1.0, 0.0, 0.5)),
-    //     transform: Transform::from_translation(Vec3::new(100., 100., 0.)),
-    //     ..default()
-    // });
+    commands.spawn(MaterialMesh2dBundle {
+        mesh: meshes.add(Circle::new(10.)).into(),
+        material: materials.add(Color::srgb(1.0, 0.0, 0.5)),
+        transform: Transform::from_translation(Vec3::new(100., 100., 0.)),
+        ..default()
+    });
 
     // Light occluder
     commands.spawn(MaterialMesh2dBundle {

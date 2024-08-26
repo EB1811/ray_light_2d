@@ -30,6 +30,17 @@ struct Output {
     @location(1) history: vec4<f32>,
 };
 
+
+fn lin_to_srgb(color: vec4<f32>) -> vec4<f32> {
+    let x: vec3<f32> = color.rgb * 12.92;
+    let y: vec3<f32> = 1.055 * pow(clamp(color.rgb, vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(1.0, 1.0, 1.0)), vec3<f32>(0.4166667, 0.4166667, 0.4166667)) - 0.055;
+    var clr: vec3<f32> = color.rgb;
+    clr.r = select(y.r, x.r, color.r < 0.0031308);
+    clr.g = select(y.g, x.g, color.g < 0.0031308);
+    clr.b = select(y.b, x.b, color.b < 0.0031308);
+    return vec4<f32>(clr, color.a);
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> Output {
   // Very basic denoising algorithm.
@@ -73,17 +84,17 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
       mixed_color /= 9.0;
   }
 
-  let col: vec3<f32> = textureSample(screen_texture, texture_sampler, in.uv).rgb;
+  let col: vec4<f32> = textureSample(screen_texture, texture_sampler, in.uv);
   let integ: f32 = 2.0;
-  mixed_color = vec4<f32>((1.0 - (1.0 / integ)) * mixed_color.rgb + col * (1.0 / integ), 1.0);
+  mixed_color = vec4<f32>((1.0 - (1.0 / integ)) * mixed_color.rgb + col.rgb * (1.0 / integ), col.a);
 
-  // Make it less blurry by increasing the weight of the original pixel.
-  mixed_color = mixed_color * 0.8 + textureSample(screen_texture, texture_sampler, in.uv) * 0.2;
+  // Make it less blurry by increasing the weight of the original pixel accounting for brightness (brighter pixels are less denoised).
+  // mixed_color = mixed_color * 0.8 + col * 0.2;
 
   mixed_color /= f32(denoise_count);
 
   var out: Output;
-  out.view_target = mixed_color;
+  out.view_target = lin_to_srgb(mixed_color);
   out.history = mixed_color;
 
   // out.view_target = textureSample(screen_texture, texture_sampler, in.uv);
