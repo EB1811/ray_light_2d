@@ -11,6 +11,8 @@ struct VordieLightSettings {
     u_emission_multi: f32,
     u_max_raymarch_steps: i32,
     u_dist_mod: f32,
+    u_emission_range: f32,
+    u_emission_dropoff: f32,
 }
 @group(0) @binding(2) 
 var<uniform> settings: VordieLightSettings;
@@ -70,16 +72,11 @@ fn raymarch(origin: vec2<f32>, dir: vec2<f32>, time: f32, reso: vec2<f32>) -> Ra
             );
         }
 
-        // var dist_to_surface: f32 = textureLoad(u_distance_data, vec2<i32>(i32(sample_point.x), i32(sample_point.y)), 0).r / settings.u_dist_mod;
         var dist_to_surface: f32 = textureSample(u_distance_data, texture_sampler, sample_point).r / settings.u_dist_mod;
 
         // we've hit a surface if distance field returns 0 or close to 0 (due to our distance field using a 16-bit float
         // the precision isn't enough to just check against 0).
         if (dist_to_surface < 0.5 / max(reso.x, reso.y)) {
-            // Get a random light pixel along our marched ray for GI.
-            // let rand = random(((f32(i) + 1.0) / 5) * vec2<f32>(time, -time));
-            // let random_pixel_pos: vec2<f32> = origin + rand * (sample_point - origin);
-
             return RaymarchResult(
                 true,
                 sample_point,
@@ -154,9 +151,6 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         if(ray_res.hit) {
             let pixel_surface: SurfaceResult = get_surface(ray_res.hit_pos, ray_origin);
 
-            // Also collect the random pixel for GI.
-            // rand_pixel_col += textureSample(history_texture, texture_sampler, ray_res.random_pixel_pos).rgb;
-
             // GI using nearest pixels from last frame.
             var last_emission: f32 = 0.0;
             var last_col: vec3<f32> = vec3<f32>(0.0);
@@ -171,20 +165,14 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
                 last_emission = 0.0;
             }
 
-            pixel_emis += pixel_surface.emissive + last_emission;
-            pixel_col += (pixel_surface.colour + last_col) * (pixel_surface.emissive + last_emission);
+            let dist_att: f32 = pow(max(1.0 - (ray_res.ray_dist * ray_res.ray_dist) / (settings.u_emission_range * settings.u_emission_range), 0.0), settings.u_emission_dropoff);
+            pixel_emis += (pixel_surface.emissive + last_emission) * dist_att;
+            pixel_col += (pixel_surface.colour + last_col) * (pixel_surface.emissive + last_emission) * dist_att;
         }
     }
 
     pixel_emis /= f32(settings.u_rays_per_pixel);
     pixel_col /= f32(settings.u_rays_per_pixel);
-
-    // var col = (pixel_col / pixel_emis) * (pixel_emis / f32(settings.u_rays_per_pixel));
-
-    // Add the GI using a little bit of the random pixel color.
-    // rand_pixel_col /= f32(settings.u_rays_per_pixel);
-    // col += rand_pixel_col * 0.1;
-
 
 
     // Color correction and filters.

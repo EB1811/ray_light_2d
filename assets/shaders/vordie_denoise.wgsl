@@ -97,7 +97,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
   out.view_target = lin_to_srgb(mixed_color);
   out.history = mixed_color;
 
-  // out.view_target = textureSample(screen_texture, texture_sampler, in.uv);
+  // out.view_target = lin_to_srgb(textureSample(screen_texture, texture_sampler, in.uv));
   // out.history = textureSample(screen_texture, texture_sampler, in.uv);
 
   return out;

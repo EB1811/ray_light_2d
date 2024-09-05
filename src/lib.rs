@@ -34,6 +34,8 @@ pub struct VordieLightSettings {
     pub u_emission_multi: f32,
     pub u_max_raymarch_steps: i32,
     pub u_dist_mod: f32,
+    pub u_emission_range: f32,
+    pub u_emission_dropoff: f32,
 }
 impl Default for VordieLightSettings {
     fn default() -> Self {
@@ -42,6 +44,8 @@ impl Default for VordieLightSettings {
             u_emission_multi: 1.0,
             u_max_raymarch_steps: 64,
             u_dist_mod: 1.0,
+            u_emission_range: 1.5,
+            u_emission_dropoff: 1.5,
         }
     }
 }

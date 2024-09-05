@@ -2,6 +2,7 @@ use bevy::{
     core_pipeline::{bloom::BloomSettings, tonemapping::Tonemapping},
     prelude::*,
     sprite::MaterialMesh2dBundle,
+    window::WindowResolution,
 };
 // use bevy::render::camera::RenderTarget;
 use ray_light_2d::prelude::*;
@@ -16,16 +17,19 @@ fn main() {
         // ! MSAA needs to be off for the jump flood to work for now
         .insert_resource(Msaa::Off)
         .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    resolution: (500., 500.).into(),
-                    // resolution: WindowResolution::new(800., 800.).with_scale_factor_override(2.),
-                    title: "Vordie: Minimal Example".into(),
-                    resizable: false,
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        resolution: (500., 500.).into(),
+                        // resolution: WindowResolution::new(1600., 1600.)
+                        //     .with_scale_factor_override(2.),
+                        title: "Vordie: Minimal Example".into(),
+                        resizable: false,
+                        ..default()
+                    }),
                     ..default()
-                }),
-                ..default()
-            }),
+                })
+                .set(ImagePlugin::default_nearest()),
             VordieLight2DPlugin,
         ))
         .add_systems(Startup, setup)
