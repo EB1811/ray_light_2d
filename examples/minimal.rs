@@ -75,19 +75,29 @@ fn setup(
         ..default()
     });
 
-    // Light occluder
+    // Walls
+
+    // Light occluder top
     commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(40.)).into(),
+        mesh: meshes.add(Rectangle::new(300., 10.)).into(),
         material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(-100., 100., 0.)),
+        transform: Transform::from_translation(Vec3::new(0., 150., 0.)),
         ..default()
     });
 
-    // Light occluder
+    // Light occluder left
     commands.spawn(MaterialMesh2dBundle {
-        mesh: meshes.add(Circle::new(40.)).into(),
+        mesh: meshes.add(Rectangle::new(10., 250.)).into(),
         material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
-        transform: Transform::from_translation(Vec3::new(100., -100., 0.)),
+        transform: Transform::from_translation(Vec3::new(-150., 50., 0.)),
+        ..default()
+    });
+
+    // Light occluder bottom
+    commands.spawn(MaterialMesh2dBundle {
+        mesh: meshes.add(Rectangle::new(300., 10.)).into(),
+        material: materials.add(Color::srgb(0.0, 0.0, 0.0)),
+        transform: Transform::from_translation(Vec3::new(0., -150., 0.)),
         ..default()
     });
 }
